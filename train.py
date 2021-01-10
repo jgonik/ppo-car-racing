@@ -175,7 +175,7 @@ class Agent():
         with torch.no_grad():
             for i in range(NUM_AGENTS):
                 agent_state = state[i,:,:,:]
-                agent_state = agent_state.unsqueeze(0)
+                agent_state = agent_state.unsqueeze(0).to(device)
                 alpha, beta = self.net(agent_state)[0]
                 dist = Beta(alpha, beta)
                 action = dist.sample()
@@ -214,7 +214,7 @@ class Agent():
         with torch.no_grad():
             net_sum = 0
             for i in range(s_.shape[0]):
-                net_input = torch.reshape(s_[i,:,:,:,:], (2, 4, 96, 96))
+                net_input = torch.reshape(s_[i,:,:,:,:], (2, 4, 96, 96)).to(device)
                 net_sum += self.net(net_input)[1]
             # target_v = r + args.gamma * self.net(s_)[1]
             # right now I'm taking the average of the results from the two cars... I think that 2000 of the size
@@ -233,7 +233,7 @@ class Agent():
                 net_avg = []
                 for i in range(s[index].shape[0]):
                     net_input = s[index][i, :,:,:,:]
-                    net_input = torch.reshape(net_input, (2, 4, 96, 96))
+                    net_input = torch.reshape(net_input, (2, 4, 96, 96)).to(device)
                     net_output = self.net(net_input)
                     alpha, beta = net_output[0]
                     net_sum = (net_output[1][0] + net_output[1][1]) / 2
