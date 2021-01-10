@@ -249,7 +249,7 @@ class Agent():
                 surr1 = ratio * adv[index]
                 surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv[index]
                 action_loss = -torch.min(surr1, surr2).mean()
-                value_loss = F.smooth_l1_loss(torch.FloatTensor(net_avg).unsqueeze(1), target_v[index])
+                value_loss = F.smooth_l1_loss(torch.FloatTensor(net_avg).unsqueeze(1).to(device), target_v[index])
                 loss = action_loss + 2. * value_loss
 
                 self.optimizer.zero_grad()
