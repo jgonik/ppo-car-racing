@@ -30,11 +30,10 @@ torch.manual_seed(args.seed)
 if use_cuda:
     torch.cuda.manual_seed(args.seed)
 
-NUM_AGENTS = 2
 writer = SummaryWriter()
 
-transition = np.dtype([('s', np.float64, (args.img_stack, NUM_AGENTS, 96, 96)), ('a', np.float64, (NUM_AGENTS, 3)), ('a_logp', np.float64, (2,)),
-                       ('r', np.float64, (2,)), ('s_', np.float64, (args.img_stack, NUM_AGENTS, 96, 96))])
+transition = np.dtype([('s', np.float64, (args.img_stack, 96, 96)), ('a', np.float64, (3,)), ('a_logp', np.float64),
+                       ('r', np.float64), ('s_', np.float64, (args.img_stack, 96, 96))])
 
 
 class Env():
@@ -43,10 +42,9 @@ class Env():
     """
 
     def __init__(self):
-        # self.env = gym.make('CarRacing-v0')
-        self.env = MultiCarRacing(num_agents=NUM_AGENTS)
+        self.env = MultiCarRacing()
         self.env.seed(args.seed)
-        self.reward_threshold = 900
+        self.reward_threshold = 800
 
     def reset(self):
         self.counter = 0
@@ -96,11 +94,11 @@ class Env():
         # record reward for last 100 steps
         count = 0
         length = 100
-        history = np.zeros((length, NUM_AGENTS))
+        history = np.zeros(length)
 
         def memory(reward):
             nonlocal count
-            history[count,:] = reward
+            history[count] = reward
             count = (count + 1) % length
             return np.mean(history)
 
@@ -169,27 +167,16 @@ class Agent():
         self.optimizer = optim.Adam(self.net.parameters(), lr=1e-3)
 
     def select_action(self, state):
-        actions = np.zeros((NUM_AGENTS, 3))
-        a_logps = np.zeros(NUM_AGENTS)
-        # state = torch.from_numpy(state).double().to(device).unsqueeze(0)
-        state = torch.from_numpy(state).double().to(device)
-        state = torch.reshape(state, (2, 4, 96, 96))
+        state = torch.from_numpy(state).double().to(device).unsqueeze(0)
         with torch.no_grad():
-            for i in range(NUM_AGENTS):
-                agent_state = state[i,:,:,:]
-                agent_state = agent_state.unsqueeze(0).to(device)
-                alpha, beta = self.net(agent_state)[0]
-                dist = Beta(alpha, beta)
-                action = dist.sample()
-                a_logp = dist.log_prob(action).sum(dim=1)
-                a_logp = a_logp.item()
-                action = action.squeeze().cpu().numpy()
-                actions[i,:] = action
-                a_logps[i] = a_logp
+            alpha, beta = self.net(state)[0]
+        dist = Beta(alpha, beta)
+        action = dist.sample()
+        a_logp = dist.log_prob(action).sum(dim=1)
 
-        # action = action.squeeze().cpu().numpy()
-        # a_logp = a_logp.item()
-        return actions, a_logps
+        action = action.squeeze().cpu().numpy()
+        a_logp = a_logp.item()
+        return action, a_logp
 
     def save_param(self):
         torch.save(self.net.state_dict(), 'param/ppo_net_params.pkl')
@@ -214,36 +201,14 @@ class Agent():
         old_a_logp = torch.tensor(self.buffer['a_logp'], dtype=torch.double).to(device).view(-1, 1)
 
         with torch.no_grad():
-            net_sum = 0
-            for i in range(s_.shape[0]):
-                net_input = torch.reshape(s_[i,:,:,:,:], (2, 4, 96, 96)).to(device)
-                net_sum += self.net(net_input)[1]
-            # target_v = r + args.gamma * self.net(s_)[1]
-            # right now I'm taking the average of the results from the two cars... I think that 2000 of the size
-            # 4000 vector come from each individual car, but we'll see if this averaging works well enough
-            net_result = (net_sum / s_.shape[0])
-            # net_result = (net_result[0] + net_result[1]) / 2
-            target_v = r + args.gamma * net_result[0] * net_result[1]
-            adv = target_v - (net_result[0] + net_result[1])
+            target_v = r + args.gamma * self.net(s_)[1]
+            adv = target_v - self.net(s)[1]
             # adv = (adv - adv.mean()) / (adv.std() + 1e-8)
 
         for _ in range(self.ppo_epoch):
             for index in BatchSampler(SubsetRandomSampler(range(self.buffer_capacity)), self.batch_size, False):
 
-                alpha_sum = 0
-                beta_sum = 0
-                net_avg = []
-                for i in range(s[index].shape[0]):
-                    net_input = s[index][i, :,:,:,:]
-                    net_input = torch.reshape(net_input, (2, 4, 96, 96)).to(device)
-                    net_output = self.net(net_input)
-                    alpha, beta = net_output[0]
-                    net_sum = (net_output[1][0] + net_output[1][1]) / 2
-                    net_avg.append(net_sum)
-                    alpha_sum += alpha
-                    beta_sum += beta
-                alpha = alpha_sum / s[index].shape[0]
-                beta = beta_sum / s[index].shape[0]
+                alpha, beta = self.net(s[index])[0]
                 dist = Beta(alpha, beta)
                 a_logp = dist.log_prob(a[index]).sum(dim=1, keepdim=True)
                 ratio = torch.exp(a_logp - old_a_logp[index])
@@ -251,7 +216,7 @@ class Agent():
                 surr1 = ratio * adv[index]
                 surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv[index]
                 action_loss = -torch.min(surr1, surr2).mean()
-                value_loss = F.smooth_l1_loss(torch.FloatTensor(net_avg).unsqueeze(1).to(device), target_v[index])
+                value_loss = F.smooth_l1_loss(self.net(s[index])[1], target_v[index])
                 loss = action_loss + 2. * value_loss
 
                 self.optimizer.zero_grad()
@@ -261,21 +226,29 @@ class Agent():
 
 
 if __name__ == "__main__":
-    agent = Agent()
+    agent1 = Agent()
+    agent2 = Agent()
     env = Env()
     if args.vis:
         draw_reward = DrawLine(env="car", title="PPO", xlabel="Episode", ylabel="Moving averaged episode reward")
 
     training_records = []
-    running_score = 0
+    running_score = np.array([0, 0])
     state = env.reset()
     for i_ep in range(100000):
-        score = 0
+        score = np.array([0, 0])
         state = env.reset()
+        print('state shape:', state.shape)
+        agent1_state = state[0,...]
+        agent2_state = state[1,...]
 
         for t in range(1000):
-            action, a_logp = agent.select_action(state)
-            state_, reward, done, die = env.step(action * np.array([2., 1., 1.]) + np.array([-1., 0., 0.]))
+            action1, a_logp1 = agent1.select_action(agent1_state)
+            action2, a_logp2 = agent2.select_action(agent1_state)
+            action1 = action1 * np.array([2., 1., 1.]) + np.array([-1., 0., 0.])
+            action2 = action2 * np.array([2., 1., 1.]) + np.array([-1., 0., 0.])
+            action = np.vstack((action1, action2))
+            state_, reward, done, die = env.step(action)
             if args.render:
                 env.render()
             if agent.store((state, action, a_logp, reward, state_)):
@@ -293,8 +266,8 @@ if __name__ == "__main__":
         if i_ep % args.log_interval == 0:
             if args.vis:
                 draw_reward(xdata=i_ep, ydata=running_score)
-            print('Ep {}\tLast score: {}\tMoving average score: {}'.format(i_ep, score, running_score))
+            print('Ep {}\tLast score: {:.2f}\tMoving average score: {:.2f}'.format(i_ep, score, running_score))
             agent.save_param()
-        if all(score > env.reward_threshold for score in running_score):
+        if all(agent_score > env.reward_threshold for agent_score in running_score):
             print("Solved! Running reward is now {} and the last episode runs to {}!".format(running_score, score))
             break
