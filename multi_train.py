@@ -9,7 +9,9 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Beta
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
+from torch.utils.tensorboard import SummaryWriter
 from utils import DrawLine
+from multi_car_racing import MultiCarRacing
 
 parser = argparse.ArgumentParser(description='Train a PPO agent for the CarRacing-v0')
 parser.add_argument('--gamma', type=float, default=0.99, metavar='G', help='discount factor (default: 0.99)')
@@ -29,6 +31,7 @@ if use_cuda:
     torch.cuda.manual_seed(args.seed)
 
 NUM_AGENTS = 2
+writer = SummaryWriter()
 
 transition = np.dtype([('s', np.float64, (args.img_stack, 96, 96)), ('a', np.float64, (3,)), ('a_logp', np.float64),
                        ('r', np.float64), ('s_', np.float64, (args.img_stack, 96, 96))])
@@ -40,7 +43,7 @@ class Env():
     """
 
     def __init__(self):
-        self.env = gym.make('CarRacing-v0')
+        self.env = MultiCarRacing(NUM_AGENTS)
         self.env.seed(args.seed)
         self.net = Net().double().to(device)
         self.reward_threshold = 800
@@ -71,13 +74,13 @@ class Env():
         total_reward = 0
         for i in range(args.action_repeat):
             img_rgb, reward, die, _ = self.env.step(action)
-            print('img rgb shape:', img_rgb.shape)
             # don't penalize "die state"
             if die:
                 reward += 100
             # green penalty
-            if np.mean(img_rgb[:, :, 1]) > 185.0:
-                reward -= 0.05
+            for i in range(NUM_AGENTS):
+                if np.mean(img_rgb[i, :, :, 1]) > 185.0:
+                    reward -= 0.05
             total_reward += reward
             # if no reward recently, end the episode
             done = True if self.av_r(reward) <= -0.1 else False
@@ -93,6 +96,7 @@ class Env():
         self.env.render(*arg)
 
     @staticmethod
+    # TODO: may have to modify this to account for multiple agents
     def rgb2gray(rgb, norm=True):
         # rgb image -> gray [0, 1]
         gray = np.dot(rgb[..., :], [0.299, 0.587, 0.114])
@@ -106,11 +110,11 @@ class Env():
         # record reward for last 100 steps
         count = 0
         length = 100
-        history = np.zeros(length)
+        history = np.zeros((length, NUM_AGENTS))
 
         def memory(reward):
             nonlocal count
-            history[count] = reward
+            history[count,:] = reward
             count = (count + 1) % length
             return np.mean(history)
 
@@ -236,6 +240,7 @@ if __name__ == "__main__":
     for i_ep in range(100000):
         score = np.zeros((NUM_AGENTS,))
         state = env.reset()
+        state = np.reshape(state, (NUM_AGENTS, 4, 96, 96))
 
         for t in range(1000):
             actions = []
@@ -246,6 +251,7 @@ if __name__ == "__main__":
                 actions.append(action * np.array([2., 1., 1.]) + np.array([-1., 0., 0.]))
                 a_logps.append(a_logp)
             state_, reward, done, die = env.step(np.vstack(actions))
+            state_ = np.reshape(state_, (NUM_AGENTS, 4, 96, 96))
             if args.render:
                 env.render()
             for i, agent in enumerate(agents):
@@ -257,6 +263,9 @@ if __name__ == "__main__":
             if done or die:
                 break
         running_score = running_score * 0.99 + score * 0.01
+        for i in range(NUM_AGENTS):
+            writer.add_scalar("running_score_" + str(i), running_score[i], i_ep)
+            writer.add_scalar("last_score_" + str(i), score[i], i_ep)
 
         if i_ep % args.log_interval == 0:
             print('Ep {}\tLast score: {}\tMoving average score: {}'.format(i_ep, score, running_score))
