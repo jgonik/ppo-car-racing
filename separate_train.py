@@ -30,6 +30,7 @@ torch.manual_seed(args.seed)
 if use_cuda:
     torch.cuda.manual_seed(args.seed)
 
+NUM_AGENTS = 2
 writer = SummaryWriter()
 
 transition = np.dtype([('s', np.float64, (args.img_stack, 96, 96)), ('a', np.float64, (3,)), ('a_logp', np.float64),
@@ -94,11 +95,11 @@ class Env():
         # record reward for last 100 steps
         count = 0
         length = 100
-        history = np.zeros(length)
+        history = np.zeros((length, NUM_AGENTS))
 
         def memory(reward):
             nonlocal count
-            history[count] = reward
+            history[count,:] = reward
             count = (count + 1) % length
             return np.mean(history)
 
@@ -233,14 +234,13 @@ if __name__ == "__main__":
         draw_reward = DrawLine(env="car", title="PPO", xlabel="Episode", ylabel="Moving averaged episode reward")
 
     training_records = []
-    running_score = np.array([0, 0])
+    running_score = np.array([0., 0.])
     state = env.reset()
     for i_ep in range(100000):
-        score = np.array([0, 0])
+        score = np.array([0., 0.])
         state = env.reset()
-        print('state shape:', state.shape)
-        agent1_state = state[0,...]
-        agent2_state = state[1,...]
+        agent1_state = state[:,0,...]
+        agent2_state = state[:,1,...]
 
         for t in range(1000):
             action1, a_logp1 = agent1.select_action(agent1_state)
@@ -251,9 +251,12 @@ if __name__ == "__main__":
             state_, reward, done, die = env.step(action)
             if args.render:
                 env.render()
-            if agent.store((state, action, a_logp, reward, state_)):
+            if agent1.store((agent1_state, action1, a_logp1, reward[0], state_[:,0,...])):
                 print('updating')
-                agent.update()
+                agent1.update()
+            if agent2.store((agent2_state, action2, a_logp2, reward[1], state_[:,1,...])):
+                print('updating')
+                agent2.update()
             score += reward
             state = state_
             if done or die:
@@ -266,8 +269,9 @@ if __name__ == "__main__":
         if i_ep % args.log_interval == 0:
             if args.vis:
                 draw_reward(xdata=i_ep, ydata=running_score)
-            print('Ep {}\tLast score: {:.2f}\tMoving average score: {:.2f}'.format(i_ep, score, running_score))
-            agent.save_param()
+            print('Ep {}\tLast score: {}\tMoving average score: {}'.format(i_ep, score, running_score))
+            agent1.save_param()
+            agent2.save_param()
         if all(agent_score > env.reward_threshold for agent_score in running_score):
             print("Solved! Running reward is now {} and the last episode runs to {}!".format(running_score, score))
             break
