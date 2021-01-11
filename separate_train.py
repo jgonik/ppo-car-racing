@@ -45,7 +45,7 @@ class Env():
     def __init__(self):
         self.env = MultiCarRacing()
         self.env.seed(args.seed)
-        self.reward_threshold = 800
+        self.reward_threshold = 900
 
     def reset(self):
         self.counter = 0
