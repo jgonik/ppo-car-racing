@@ -112,8 +112,6 @@ class FrictionDetector(contactListener):
             return
         if begin:
             obj.tiles.add(tile)
-            team = obj.car_id // self.env.num_agents_per_team
-            car_index = obj.car_id % self.env.num_agents_per_team
             # print tile.road_friction, "ADD", len(obj.tiles)
             if not tile.road_visited[obj.car_id]:
                 tile.road_visited[obj.car_id] = True
@@ -122,7 +120,7 @@ class FrictionDetector(contactListener):
                 # The reward is dampened on tiles that have been visited already.
                 # TODO: change so that only dampened on tiles that have been visited by the opposing team
                 past_visitors = sum(tile.road_visited)-1
-                reward_factor = 1 - (past_visitors / (self.env.num_agents_per_team * self.env.num_teams))
+                reward_factor = 1 - (past_visitors / self.env.total_num_agents)
                 self.env.reward[obj.car_id] += reward_factor * 1000.0/len(self.env.track)
         else:
             obj.tiles.remove(tile)
@@ -149,18 +147,17 @@ class TeamCarRacing(gym.Env, EzPickle):
         self.invisible_state_window = None
         self.invisible_video_window = None
         self.road = None
-        self.cars = [[None] * num_agents_per_team for _ in range(num_teams)]
-        self.all_cars = [None] * num_agents_per_team * num_teams
+        self.cars = [None] * self.total_num_agents
         self.car_order = {}  # Determines starting positions of cars
         self.reward = np.zeros(self.total_num_agents)
         self.prev_reward = np.zeros(self.total_num_agents)
-        self.tile_visited_count = [0] * num_agents_per_team * num_teams
+        self.tile_visited_count = [0] * self.total_num_agents
         self.verbose = verbose
         self.fd_tile = fixtureDef(
                 shape = polygonShape(vertices=
                     [(0, 0),(1, 0),(1, -1),(0, -1)]))
-        self.driving_backward = [np.zeros(num_agents_per_team, dtype=bool) for _ in range(num_teams)]
-        self.driving_on_grass = [np.zeros(num_agents_per_team, dtype=bool) for _ in range(num_teams)]
+        self.driving_backward = np.zeros(self.total_num_agents, dtype=bool)
+        self.driving_on_grass = np.zeros(self.total_num_agents, dtype=bool)
         self.use_random_direction = use_random_direction  # Whether to select direction randomly
         self.episode_direction = direction  # Choose 'CCW' (default) or 'CW' (flipped)
         if self.use_random_direction:  # Choose direction randomly
@@ -187,11 +184,7 @@ class TeamCarRacing(gym.Env, EzPickle):
             self.world.DestroyBody(t)
         self.road = []
 
-        for team in self.cars:
-            for car in team:
-                car.destroy()
-
-        for car in self.all_cars:
+        for car in self.cars:
             car.destroy()
 
     def _create_track(self):
@@ -355,13 +348,13 @@ class TeamCarRacing(gym.Env, EzPickle):
         self._destroy()
         self.reward = np.zeros(self.total_num_agents)
         self.prev_reward = np.zeros(self.total_num_agents)
-        self.tile_visited_count = [0] * self.num_agents_per_team * self.num_teams
+        self.tile_visited_count = [0] * self.total_num_agents
         self.t = 0.0
         self.road_poly = []
 
         # Reset driving backwards/on-grass states and track direction
-        self.driving_backward = [np.zeros(self.num_agents_per_team, dtype=bool) for _ in range(self.num_teams)]
-        self.driving_on_grass = [np.zeros(self.num_agents_per_team, dtype=bool) for _ in range(self.num_teams)]
+        self.driving_backward = np.zeros(self.total_num_agents, dtype=bool)
+        self.driving_on_grass = np.zeros(self.total_num_agents, dtype=bool)
         if self.use_random_direction:  # Choose direction randomly
             self.episode_direction = np.random.choice(['CW', 'CCW'])
 
@@ -419,14 +412,12 @@ class TeamCarRacing(gym.Env, EzPickle):
 
             # Create car at location with given angle
             team = car_id // self.num_agents_per_team
-            car_index = car_id % self.num_agents_per_team
-            self.cars[team][car_index] = car_dynamics.Car(self.world, angle, new_x,
-                                                 new_y)
-            self.cars[team][car_index].hull.color = CAR_COLORS[team % len(CAR_COLORS)]
-            self.all_cars[car_id] = self.cars[team][car_index]
+            self.cars[car_id] = car_dynamics.Car(self.world, angle, new_x, new_y)
+            # Make cars on the same team the same color
+            self.cars[car_id].hull.color = CAR_COLORS[team % len(CAR_COLORS)]
 
             # This will be used to identify the car that touches a particular tile.
-            for wheel in self.cars[team][car_index].wheels:
+            for wheel in self.cars[car_id].wheels:
                 wheel.car_id = car_id
 
         return self.step(None)[0]
@@ -435,22 +426,19 @@ class TeamCarRacing(gym.Env, EzPickle):
         """ Run environment for one timestep. 
         
         Parameters:
-            action(np.ndarray): List of numpy arrays of shape (num_agents,3) containing the
+            action(np.ndarray): Numpy array of shape (num_agents,3) containing the
                 commands for each car. Each command is of the shape (steer, gas, brake).
         """
         if action is not None:
             # NOTE: re-shape action as input action is flattened
-            for i, team_action in enumerate(action):
-                team_action = np.reshape(team_action, (self.num_agents_per_team, -1))
-                team = self.cars[i]
-                for j, car in enumerate(team):
-                    car.steer(-team_action[j][0])
-                    car.gas(team_action[j][1])
-                    car.brake(team_action[j][2])
+            action = np.reshape(action, (self.total_num_agents, -1))
+            for car_id, car in enumerate(self.cars):
+                car.steer(-action[car_id][0])
+                car.gas(action[car_id][1])
+                car.brake(action[car_id][2])
 
-        for team in self.cars:
-            for car in team:
-                car.step(1.0/FPS)
+        for car in self.cars:
+            car.step(1.0/FPS)
         self.world.Step(1.0/FPS, 6*30, 2*30)
         self.t += 1.0/FPS
 
@@ -469,7 +457,7 @@ class TeamCarRacing(gym.Env, EzPickle):
             step_reward = self.reward - self.prev_reward
 
             # Add penalty for driving backward
-            for car_id, car in enumerate(self.all_cars):  # Enumerate through cars
+            for car_id, car in enumerate(self.cars):  # Enumerate through cars
 
                 # Get car speed
                 vel = car.hull.linearVelocity
@@ -495,9 +483,7 @@ class TeamCarRacing(gym.Env, EzPickle):
                 # Check if car is driving on grass by checking inside polygons
                 on_grass = not np.array([car_pos_as_point.within(polygon)
                                    for polygon in self.road_poly_shapely]).any()
-                team = car_id // self.num_agents_per_team
-                car_index = team % self.num_agents_per_team
-                self.driving_on_grass[team][car_index] = on_grass
+                self.driving_on_grass[car_id] = on_grass
 
                 # Find track angle of closest point
                 desired_angle = self.track[track_index][1]
@@ -517,10 +503,10 @@ class TeamCarRacing(gym.Env, EzPickle):
                 # If car is driving backward and not on grass, penalize car. The
                 # backwards flag is set even if it is driving on grass.
                 if angle_diff > BACKWARD_THRESHOLD:
-                    self.driving_backward[team][car_index] = True
+                    self.driving_backward[car_id] = True
                     step_reward[car_id] -= K_BACKWARD * angle_diff
                 else:
-                    self.driving_backward[team][car_index] = False
+                    self.driving_backward[car_id] = False
 
             self.prev_reward = self.reward.copy()
             if len(self.track) in self.tile_visited_count:
@@ -528,7 +514,7 @@ class TeamCarRacing(gym.Env, EzPickle):
 
             # The car that leaves the field experiences a reward of -100 
             # and the episode is terminated subsequently.
-            for car_id, car in enumerate(self.all_cars):
+            for car_id, car in enumerate(self.cars):
                 x, y = car.hull.position
                 if abs(x) > PLAYFIELD or abs(y) > PLAYFIELD:
                     done = True
@@ -568,12 +554,10 @@ class TeamCarRacing(gym.Env, EzPickle):
         #NOTE (ig): Following two variables seemed unused. Commented them out.
         #zoom_state  = ZOOM*SCALE*STATE_W/WINDOW_W 
         #zoom_video  = ZOOM*SCALE*VIDEO_W/WINDOW_W
-        team = car_id // self.num_agents_per_team
-        car_index = car_id % self.num_agents_per_team
-        scroll_x = self.cars[team][car_index].hull.position[0]
-        scroll_y = self.cars[team][car_index].hull.position[1]
-        angle = -self.cars[team][car_index].hull.angle
-        vel = self.cars[team][car_index].hull.linearVelocity
+        scroll_x = self.cars[car_id].hull.position[0]
+        scroll_y = self.cars[car_id].hull.position[1]
+        angle = -self.cars[car_id].hull.angle
+        vel = self.cars[car_id].hull.linearVelocity
         if np.linalg.norm(vel) > 0.5:
             angle = math.atan2(vel[0], vel[1])
         self.transform.set_scale(zoom, zoom)
@@ -585,7 +569,7 @@ class TeamCarRacing(gym.Env, EzPickle):
         self.transform.set_rotation(angle)
 
         # Set colors for each viewer and draw cars
-        for id, car in enumerate(self.all_cars):
+        for id, car in enumerate(self.cars):
             if self.use_ego_color:  # Apply same ego car color coloring scheme
                 car.hull.color = (0.0, 0.0, 0.8)  # Set all other car colors to blue
                 if id == car_id:  # Ego car
@@ -626,7 +610,7 @@ class TeamCarRacing(gym.Env, EzPickle):
             return self.viewer[car_id].isopen
 
         image_data = pyglet.image.get_buffer_manager().get_color_buffer().get_image_data()
-        arr = np.frombuffer(image_data.get_data(), dtype=np.uint8)
+        arr = np.fromstring(image_data.get_data(), dtype=np.uint8, sep='')
         arr = arr.reshape(VP_H, VP_W, 4)
         arr = arr[::-1, :, 0:3]
 
@@ -661,8 +645,6 @@ class TeamCarRacing(gym.Env, EzPickle):
         gl.glEnd()
 
     def render_indicators(self, agent_id, W, H):
-        team = agent_id // self.num_agents_per_team
-        car_index = agent_id % self.num_agents_per_team
         gl.glBegin(gl.GL_QUADS)
         s = W/40.0
         h = H/40.0
@@ -683,21 +665,21 @@ class TeamCarRacing(gym.Env, EzPickle):
             gl.glVertex3f((place+val)*s, 4*h, 0)
             gl.glVertex3f((place+val)*s, 2*h, 0)
             gl.glVertex3f((place+0)*s, 2*h, 0)
-        true_speed = np.sqrt(np.square(self.cars[team][car_index].hull.linearVelocity[0]) \
-            + np.square(self.cars[team][car_index].hull.linearVelocity[1]))
+        true_speed = np.sqrt(np.square(self.cars[agent_id].hull.linearVelocity[0]) \
+            + np.square(self.cars[agent_id].hull.linearVelocity[1]))
         vertical_ind(5, 0.02*true_speed, (1,1,1))
-        vertical_ind(7, 0.01*self.cars[team][car_index].wheels[0].omega, (0.0,0,1)) # ABS sensors
-        vertical_ind(8, 0.01*self.cars[team][car_index].wheels[1].omega, (0.0,0,1))
-        vertical_ind(9, 0.01*self.cars[team][car_index].wheels[2].omega, (0.2,0,1))
-        vertical_ind(10,0.01*self.cars[team][car_index].wheels[3].omega, (0.2,0,1))
-        horiz_ind(20, -10.0*self.cars[team][car_index].wheels[0].joint.angle, (0,1,0))
-        horiz_ind(30, -0.8*self.cars[team][car_index].hull.angularVelocity, (1,0,0))
+        vertical_ind(7, 0.01*self.cars[agent_id].wheels[0].omega, (0.0,0,1)) # ABS sensors
+        vertical_ind(8, 0.01*self.cars[agent_id].wheels[1].omega, (0.0,0,1))
+        vertical_ind(9, 0.01*self.cars[agent_id].wheels[2].omega, (0.2,0,1))
+        vertical_ind(10,0.01*self.cars[agent_id].wheels[3].omega, (0.2,0,1))
+        horiz_ind(20, -10.0*self.cars[agent_id].wheels[0].joint.angle, (0,1,0))
+        horiz_ind(30, -0.8*self.cars[agent_id].hull.angularVelocity, (1,0,0))
         gl.glEnd()
         self.score_label[agent_id].text = "%04i" % self.reward[agent_id]
         self.score_label[agent_id].draw()
 
         # Render backwards flag if driving backward and backwards flag render is enabled
-        if self.driving_backward[team][car_index] and self.backwards_flag:
+        if self.driving_backward[agent_id] and self.backwards_flag:
             pyglet.graphics.draw(3, gl.GL_TRIANGLES,
                                  ('v2i', (W-100, 30,
                                           W-75, 70,
