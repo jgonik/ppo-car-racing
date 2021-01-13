@@ -1,5 +1,6 @@
 import argparse
 
+import cv2
 import numpy as np
 
 import gym
@@ -92,8 +93,8 @@ class Env():
         assert len(self.stack) == args.img_stack
         return np.array(self.stack), total_reward, done, die
 
-    def render(self, *arg):
-        self.env.render(*arg)
+    def render(self, arg):
+        return self.env.render(arg)
 
     @staticmethod
     # TODO: may have to modify this to account for multiple agents
@@ -229,15 +230,25 @@ class Agent():
 
 
 if __name__ == "__main__":
+    NUM_EPISODES = 10
     env = Env()
     agents = []
     for _ in range(NUM_AGENTS):
         agents.append(Agent(env))
 
+    state = env.reset()
+    video_file = 'output.avi'
+    video_obs = env.render('rgb_array')
+    video_h = 2 * video_obs.shape[1]
+    video_w = video_obs.shape[2]
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    vid_writer = cv2.VideoWriter(video_file, fourcc, 24, (video_w, video_h))
+
     training_records = []
     running_score = np.zeros((NUM_AGENTS,))
-    state = env.reset()
-    for i_ep in range(100000):
+    # state = env.reset()
+    for i_ep in range(NUM_EPISODES):
         score = np.zeros((NUM_AGENTS,))
         state = env.reset()
         state = np.reshape(state, (NUM_AGENTS, 4, 96, 96))
@@ -259,6 +270,18 @@ if __name__ == "__main__":
                     print('updating')
                     agent.update()
             score += reward
+
+            video_obs = env.render('rgb_array')
+            video_obs = np.concatenate(video_obs)
+            video_caption = ["agent_" + str(i) for i in range(NUM_AGENTS)]
+
+            for line_idx, line in enumerate(video_caption):
+                video_obs = cv2.putText(video_obs, line,
+                (10, int(line_idx * video_h / 2 + 40)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, (0, 0, 255), 3)
+            vid_writer.write(video_obs)
+
             state = state_
             if done or die:
                 break
@@ -274,3 +297,5 @@ if __name__ == "__main__":
         if all(agent_score > env.reward_threshold for agent_score in running_score):
             print("Solved! Running reward is now {} and the last episode runs to {}!".format(running_score, score))
             break
+
+    vid_writer.release()
