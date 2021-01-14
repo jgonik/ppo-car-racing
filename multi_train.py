@@ -49,6 +49,9 @@ class Env():
         self.net = Net().double().to(device)
         self.reward_threshold = 800
 
+    def save_param(self):
+        torch.save(self.env.net.state_dict(), 'param/multi_ppo_net_params.pkl')
+
     def select_action(self, state):
         state = torch.from_numpy(state).double().to(device).unsqueeze(0)
         with torch.no_grad():
@@ -182,9 +185,6 @@ class Agent():
         self.env = env
         self.optimizer = optim.Adam(self.env.net.parameters(), lr=1e-3)
 
-    def save_param(self):
-        torch.save(self.env.net.state_dict(), 'param/ppo_net_params.pkl')
-
     def store(self, transition):
         self.buffer[self.counter] = transition
         self.counter += 1
@@ -230,24 +230,25 @@ class Agent():
 
 
 if __name__ == "__main__":
-    NUM_EPISODES = 10
+    NUM_EPISODES = 3000
+    LOG_INTERVAL = 200
     env = Env()
     agents = []
     for _ in range(NUM_AGENTS):
         agents.append(Agent(env))
 
-    state = env.reset()
-    video_file = 'output.avi'
-    video_obs = env.render('rgb_array')
-    video_h = 2 * video_obs.shape[1]
-    video_w = video_obs.shape[2]
+    # state = env.reset()
+    # video_file = 'output_mac_multi.avi'
+    # video_obs = env.render('rgb_array')
+    # video_h = 2 * video_obs.shape[1]
+    # video_w = video_obs.shape[2]
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    vid_writer = cv2.VideoWriter(video_file, fourcc, 24, (video_w, video_h))
+    # fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    # vid_writer = cv2.VideoWriter(video_file, fourcc, 24, (video_w, video_h))
 
     training_records = []
     running_score = np.zeros((NUM_AGENTS,))
-    # state = env.reset()
+    state = env.reset()
     for i_ep in range(NUM_EPISODES):
         score = np.zeros((NUM_AGENTS,))
         state = env.reset()
@@ -271,16 +272,16 @@ if __name__ == "__main__":
                     agent.update()
             score += reward
 
-            video_obs = env.render('rgb_array')
-            video_obs = np.concatenate(video_obs)
-            video_caption = ["agent_" + str(i) for i in range(NUM_AGENTS)]
+            # video_obs = env.render('rgb_array')
+            # video_obs = np.concatenate(video_obs)
+            # video_caption = ["agent_" + str(i) for i in range(NUM_AGENTS)]
 
-            for line_idx, line in enumerate(video_caption):
-                video_obs = cv2.putText(video_obs, line,
-                (10, int(line_idx * video_h / 2 + 40)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7, (0, 0, 255), 3)
-            vid_writer.write(video_obs)
+            # for line_idx, line in enumerate(video_caption):
+            #     video_obs = cv2.putText(video_obs, line,
+            #     (10, int(line_idx * video_h / 2 + 40)),
+            #     cv2.FONT_HERSHEY_SIMPLEX,
+            #     0.7, (0, 0, 255), 3)
+            # vid_writer.write(video_obs)
 
             state = state_
             if done or die:
@@ -290,7 +291,7 @@ if __name__ == "__main__":
             writer.add_scalar("running_score_" + str(i), running_score[i], i_ep)
             writer.add_scalar("last_score_" + str(i), score[i], i_ep)
 
-        if i_ep % args.log_interval == 0:
+        if i_ep % LOG_INTERVAL == 0:
             print('Ep {}\tLast score: {}\tMoving average score: {}'.format(i_ep, score, running_score))
             for agent in agents:
                 agent.save_param()
