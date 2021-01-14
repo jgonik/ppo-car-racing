@@ -12,6 +12,9 @@ from torch.distributions import Beta
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 from utils import DrawLine
 
+import faulthandler
+faulthandler.enable()
+
 parser = argparse.ArgumentParser(description='Train a PPO agent for the CarRacing-v0')
 parser.add_argument('--gamma', type=float, default=0.99, metavar='G', help='discount factor (default: 0.99)')
 parser.add_argument('--action-repeat', type=int, default=8, metavar='N', help='repeat action in N frames (default: 8)')
@@ -223,25 +226,26 @@ class Agent():
 
 
 if __name__ == "__main__":
-    NUM_EPISODES = 500
+    NUM_EPISODES = 3000
+    LOG_INTERVAL = 200
     agent = Agent()
     env = Env()
     if args.vis:
         draw_reward = DrawLine(env="car", title="PPO", xlabel="Episode", ylabel="Moving averaged episode reward")
 
-    state = env.reset()
-    video_file = 'output_mac.avi'
-    video_obs = env.render('rgb_array')
-    video_h = 2 * video_obs.shape[1]
-    video_w = video_obs.shape[2]
+    # state = env.reset()
+    # video_file = 'output_single_mac.avi'
+    # video_obs = env.render('rgb_array')
+    # video_h = 2 * video_obs.shape[1]
+    # video_w = video_obs.shape[2]
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    vid_writer = cv2.VideoWriter(video_file, fourcc, 24, (video_w, video_h))
+    # fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    # vid_writer = cv2.VideoWriter(video_file, fourcc, 24, (video_w, video_h))
     
     training_records = []
     running_score = 0
     state = env.reset()
-    for i_ep in range(100000):
+    for i_ep in range(NUM_EPISODES):
         score = 0
         state = env.reset()
 
@@ -255,23 +259,23 @@ if __name__ == "__main__":
                 agent.update()
             score += reward
 
-            video_obs = env.render('rgb_array')
-            video_obs = np.concatenate(video_obs)
-            video_caption = ["single_agent"]
+            # video_obs = env.render('rgb_array')
+            # video_obs = np.concatenate(video_obs)
+            # video_caption = ["single_agent"]
 
-            for line_idx, line in enumerate(video_caption):
-                video_obs = cv2.putText(video_obs, line,
-                (10, int(line_idx * video_h / 2 + 40)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7, (0, 0, 255), 3)
-            vid_writer.write(video_obs)
+            # for line_idx, line in enumerate(video_caption):
+            #     video_obs = cv2.putText(video_obs, line,
+            #     (10, int(line_idx * video_h / 2 + 40)),
+            #     cv2.FONT_HERSHEY_SIMPLEX,
+            #     0.7, (0, 0, 255), 3)
+            # vid_writer.write(video_obs)
 
             state = state_
             if done or die:
                 break
         running_score = running_score * 0.99 + score * 0.01
 
-        if i_ep % args.log_interval == 0:
+        if i_ep % LOG_INTERVAL == 0:
             if args.vis:
                 draw_reward(xdata=i_ep, ydata=running_score)
             print('Ep {}\tLast score: {:.2f}\tMoving average score: {:.2f}'.format(i_ep, score, running_score))
