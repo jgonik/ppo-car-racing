@@ -1,6 +1,7 @@
 import argparse
 
 import numpy as np
+import cv2
 
 import gym
 import torch
@@ -74,7 +75,7 @@ class Env():
         return np.array(self.stack), total_reward, done, die
 
     def render(self, *arg):
-        self.env.render(*arg)
+        return self.env.render(*arg)
 
     @staticmethod
     def rgb2gray(rgb, norm=True):
@@ -222,11 +223,21 @@ class Agent():
 
 
 if __name__ == "__main__":
+    NUM_EPISODES = 500
     agent = Agent()
     env = Env()
     if args.vis:
         draw_reward = DrawLine(env="car", title="PPO", xlabel="Episode", ylabel="Moving averaged episode reward")
 
+    state = env.reset()
+    video_file = 'output_mac.avi'
+    video_obs = env.render('rgb_array')
+    video_h = 2 * video_obs.shape[1]
+    video_w = video_obs.shape[2]
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    vid_writer = cv2.VideoWriter(video_file, fourcc, 24, (video_w, video_h))
+    
     training_records = []
     running_score = 0
     state = env.reset()
@@ -243,6 +254,18 @@ if __name__ == "__main__":
                 print('updating')
                 agent.update()
             score += reward
+
+            video_obs = env.render('rgb_array')
+            video_obs = np.concatenate(video_obs)
+            video_caption = ["single_agent"]
+
+            for line_idx, line in enumerate(video_caption):
+                video_obs = cv2.putText(video_obs, line,
+                (10, int(line_idx * video_h / 2 + 40)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, (0, 0, 255), 3)
+            vid_writer.write(video_obs)
+
             state = state_
             if done or die:
                 break
