@@ -166,9 +166,6 @@ class Agent():
     buffer_capacity, batch_size = 2000, 128
 
     def __init__(self, env):
-        self.training_step = 0
-        self.buffer = np.empty(self.buffer_capacity, dtype=transition)
-        self.counter = 0
         self.env = env
         self.optimizer = optim.Adam(self.env.net.parameters(), lr=1e-3)
 
