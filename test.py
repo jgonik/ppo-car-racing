@@ -19,16 +19,37 @@ torch.manual_seed(args.seed)
 if use_cuda:
     torch.cuda.manual_seed(args.seed)
 
+NUM_AGENTS = 2
 
 class Env():
     """
-    Test environment wrapper for CarRacing 
+    Environment wrapper for CarRacing 
     """
 
     def __init__(self):
-        self.env = gym.make('CarRacing-v0')
+        self.env = MultiCarRacing(NUM_AGENTS)
         self.env.seed(args.seed)
-        self.reward_threshold = self.env.spec.reward_threshold
+        self.net = Net().double().to(device)
+        self.reward_threshold = 800
+
+    def save_param(self):
+        torch.save(self.env.net.state_dict(), 'param/multi_ppo_net_params.pkl')
+
+    def load_param(self):
+        self.net.load_state_dict(torch.load('param/multi_ppo_net_params.pkl'))
+        self.net.eval()
+
+    def select_action(self, state):
+        state = torch.from_numpy(state).double().to(device).unsqueeze(0)
+        with torch.no_grad():
+            alpha, beta = self.net(state)[0]
+        dist = Beta(alpha, beta)
+        action = dist.sample()
+        a_logp = dist.log_prob(action).sum(dim=1)
+
+        action = action.squeeze().cpu().numpy()
+        a_logp = a_logp.item()
+        return action, a_logp
 
     def reset(self):
         self.counter = 0
@@ -37,7 +58,7 @@ class Env():
         self.die = False
         img_rgb = self.env.reset()
         img_gray = self.rgb2gray(img_rgb)
-        self.stack = [img_gray] * args.img_stack
+        self.stack = [img_gray] * args.img_stack  # four frames for decision
         return np.array(self.stack)
 
     def step(self, action):
@@ -48,8 +69,9 @@ class Env():
             if die:
                 reward += 100
             # green penalty
-            if np.mean(img_rgb[:, :, 1]) > 185.0:
-                reward -= 0.05
+            for i in range(NUM_AGENTS):
+                if np.mean(img_rgb[i, :, :, 1]) > 185.0:
+                    reward -= 0.05
             total_reward += reward
             # if no reward recently, end the episode
             done = True if self.av_r(reward) <= -0.1 else False
@@ -61,11 +83,13 @@ class Env():
         assert len(self.stack) == args.img_stack
         return np.array(self.stack), total_reward, done, die
 
-    def render(self, *arg):
-        self.env.render(*arg)
+    def render(self, arg):
+        return self.env.render(arg)
 
     @staticmethod
+    # TODO: may have to modify this to account for multiple agents
     def rgb2gray(rgb, norm=True):
+        # rgb image -> gray [0, 1]
         gray = np.dot(rgb[..., :], [0.299, 0.587, 0.114])
         if norm:
             # normalize
@@ -74,13 +98,14 @@ class Env():
 
     @staticmethod
     def reward_memory():
+        # record reward for last 100 steps
         count = 0
         length = 100
-        history = np.zeros(length)
+        history = np.zeros((length, NUM_AGENTS))
 
         def memory(reward):
             nonlocal count
-            history[count] = reward
+            history[count,:] = reward
             count = (count + 1) % length
             return np.mean(history)
 
@@ -133,45 +158,116 @@ class Net(nn.Module):
 
 class Agent():
     """
-    Agent for testing
+    Agent for training
     """
+    max_grad_norm = 0.5
+    clip_param = 0.1  # epsilon in clipped loss
+    ppo_epoch = 10
+    buffer_capacity, batch_size = 2000, 128
 
-    def __init__(self):
-        self.net = Net().float().to(device)
+    def __init__(self, env):
+        self.training_step = 0
+        self.buffer = np.empty(self.buffer_capacity, dtype=transition)
+        self.counter = 0
+        self.env = env
+        self.optimizer = optim.Adam(self.env.net.parameters(), lr=1e-3)
 
-    def select_action(self, state):
-        state = torch.from_numpy(state).float().to(device).unsqueeze(0)
+    def store(self, transition):
+        self.buffer[self.counter] = transition
+        self.counter += 1
+        if self.counter == self.buffer_capacity:
+            self.counter = 0
+            return True
+        else:
+            return False
+
+    def update(self):
+        self.training_step += 1
+
+        s = torch.tensor(self.buffer['s'], dtype=torch.double).to(device)
+        a = torch.tensor(self.buffer['a'], dtype=torch.double).to(device)
+        r = torch.tensor(self.buffer['r'], dtype=torch.double).to(device).view(-1, 1)
+        s_ = torch.tensor(self.buffer['s_'], dtype=torch.double).to(device)
+
+        old_a_logp = torch.tensor(self.buffer['a_logp'], dtype=torch.double).to(device).view(-1, 1)
+
         with torch.no_grad():
-            alpha, beta = self.net(state)[0]
-        action = alpha / (alpha + beta)
+            target_v = r + args.gamma * self.env.net(s_)[1]
+            adv = target_v - self.env.net(s)[1]
+            # adv = (adv - adv.mean()) / (adv.std() + 1e-8)
 
-        action = action.squeeze().cpu().numpy()
-        return action
+        for _ in range(self.ppo_epoch):
+            for index in BatchSampler(SubsetRandomSampler(range(self.buffer_capacity)), self.batch_size, False):
 
-    def load_param(self):
-        self.net.load_state_dict(torch.load('param/ppo_net_params.pkl'))
+                alpha, beta = self.env.net(s[index])[0]
+                dist = Beta(alpha, beta)
+                a_logp = dist.log_prob(a[index]).sum(dim=1, keepdim=True)
+                ratio = torch.exp(a_logp - old_a_logp[index])
 
+                surr1 = ratio * adv[index]
+                surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv[index]
+                action_loss = -torch.min(surr1, surr2).mean()
+                value_loss = F.smooth_l1_loss(self.env.net(s[index])[1], target_v[index])
+                loss = action_loss + 2. * value_loss
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                # nn.utils.clip_grad_norm_(self.net.parameters(), self.max_grad_norm)
+                self.optimizer.step()
 
 if __name__ == "__main__":
-    agent = Agent()
-    agent.load_param()
     env = Env()
+    env.load_param()
+    agents = []
+    for _ in range(NUM_AGENTS):
+        agents.append(Agent(env))
+
+    state = env.reset()
+    video_file = 'output_test_multi.avi'
+    video_obs = env.render('rgb_array')
+    video_h = 2 * video_obs.shape[1]
+    video_w = video_obs.shape[2]
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    vid_writer = cv2.VideoWriter(video_file, fourcc, 24, (video_w, video_h))
 
     training_records = []
-    running_score = 0
+    running_score = np.zeros((NUM_AGENTS,))
     state = env.reset()
     for i_ep in range(10):
-        score = 0
+        score = np.zeros((NUM_AGENTS,))
         state = env.reset()
+        state = np.reshape(state, (NUM_AGENTS, 4, 96, 96))
 
         for t in range(1000):
-            action = agent.select_action(state)
-            state_, reward, done, die = env.step(action * np.array([2., 1., 1.]) + np.array([-1., 0., 0.]))
+            actions = []
+            a_logps = []
+            for i, agent in enumerate(agents):
+                agent_state = state[i,...]
+                action, a_logp = env.select_action(agent_state)
+                actions.append(action * np.array([2., 1., 1.]) + np.array([-1., 0., 0.]))
+                a_logps.append(a_logp)
+            state_, reward, done, die = env.step(np.vstack(actions))
+            state_ = np.reshape(state_, (NUM_AGENTS, 4, 96, 96))
             if args.render:
                 env.render()
             score += reward
+
+            video_obs = env.render('rgb_array')
+            video_obs = np.concatenate(video_obs)
+            video_caption = ["agent_" + str(i) for i in range(NUM_AGENTS)]
+
+            for line_idx, line in enumerate(video_caption):
+                video_obs = cv2.putText(video_obs, line,
+                (10, int(line_idx * video_h / 2 + 40)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, (0, 0, 255), 3)
+            vid_writer.write(video_obs)
+
             state = state_
             if done or die:
                 break
 
         print('Ep {}\tScore: {:.2f}\t'.format(i_ep, score))
+    
+    vid_writer.release()
