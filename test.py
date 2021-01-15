@@ -6,6 +6,8 @@ import gym
 import torch
 import torch.nn as nn
 
+from multi_car_racing import MultiCarRacing
+
 parser = argparse.ArgumentParser(description='Test the PPO agent for the CarRacing-v0')
 parser.add_argument('--action-repeat', type=int, default=8, metavar='N', help='repeat action in N frames (default: 12)')
 parser.add_argument('--img-stack', type=int, default=4, metavar='N', help='stack N image in a state (default: 4)')
