@@ -42,15 +42,65 @@ class Env():
     """
     Environment wrapper for CarRacing 
     """
+    max_grad_norm = 0.5
+    clip_param = 0.1  # epsilon in clipped loss
+    ppo_epoch = 10
+    buffer_capacity, batch_size = 2000, 128
 
     def __init__(self):
         self.env = MultiCarRacing(NUM_AGENTS)
         # self.env.seed(args.seed)
         self.net = Net().double().to(device)
+        self.optimizer = optim.Adam(self.net.parameters(), lr=1e-3)
+        self.training_step = 0
         self.reward_threshold = 800
+        self.buffer = np.empty(self.buffer_capacity, dtype=transition)
+        self.counter = 0
+
+    def update(self):
+        self.training_step += 1
+
+        s = torch.tensor(self.buffer['s'], dtype=torch.double).to(device)
+        a = torch.tensor(self.buffer['a'], dtype=torch.double).to(device)
+        r = torch.tensor(self.buffer['r'], dtype=torch.double).to(device).view(-1, 1)
+        s_ = torch.tensor(self.buffer['s_'], dtype=torch.double).to(device)
+
+        old_a_logp = torch.tensor(self.buffer['a_logp'], dtype=torch.double).to(device).view(-1, 1)
+
+        with torch.no_grad():
+            target_v = r + args.gamma * self.net(s_)[1]
+            adv = target_v - self.net(s)[1]
+            # adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+
+        for _ in range(self.ppo_epoch):
+            for index in BatchSampler(SubsetRandomSampler(range(self.buffer_capacity)), self.batch_size, False):
+                alpha, beta = self.env.net(s[index])[0]
+                dist = Beta(alpha, beta)
+                a_logp = dist.log_prob(a[index]).sum(dim=1, keepdim=True)
+                ratio = torch.exp(a_logp - old_a_logp[index])
+
+                surr1 = ratio * adv[index]
+                surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv[index]
+                action_loss = -torch.min(surr1, surr2).mean()
+                value_loss = F.smooth_l1_loss(self.net(s[index])[1], target_v[index])
+                loss = action_loss + 2. * value_loss
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                # nn.utils.clip_grad_norm_(self.net.parameters(), self.max_grad_norm)
+                self.optimizer.step()
+
+    def store(self, transition):
+        self.buffer[self.counter] = transition
+        self.counter += 1
+        if self.counter == self.buffer_capacity:
+            self.counter = 0
+            return True
+        else:
+            return False
 
     def save_param(self):
-        torch.save(self.env.net.state_dict(), 'param/multi_ppo_net_params.pkl')
+        torch.save(self.net.state_dict(), 'param/multi_ppo_net_params.pkl')
 
     def select_action(self, state):
         state = torch.from_numpy(state).double().to(device).unsqueeze(0)
@@ -176,69 +226,15 @@ class Agent():
     """
     Agent for training
     """
-    max_grad_norm = 0.5
-    clip_param = 0.1  # epsilon in clipped loss
-    ppo_epoch = 10
-    buffer_capacity, batch_size = 2000, 128
 
     def __init__(self, env):
-        self.training_step = 0
-        self.buffer = np.empty(self.buffer_capacity, dtype=transition)
-        self.counter = 0
         self.env = env
-        self.optimizer = optim.Adam(self.env.net.parameters(), lr=1e-3)
-
-    def store(self, transition):
-        self.buffer[self.counter] = transition
-        self.counter += 1
-        if self.counter == self.buffer_capacity:
-            self.counter = 0
-            return True
-        else:
-            return False
-
-    def update(self):
-        self.training_step += 1
-
-        s = torch.tensor(self.buffer['s'], dtype=torch.double).to(device)
-        a = torch.tensor(self.buffer['a'], dtype=torch.double).to(device)
-        r = torch.tensor(self.buffer['r'], dtype=torch.double).to(device).view(-1, 1)
-        s_ = torch.tensor(self.buffer['s_'], dtype=torch.double).to(device)
-
-        old_a_logp = torch.tensor(self.buffer['a_logp'], dtype=torch.double).to(device).view(-1, 1)
-
-        with torch.no_grad():
-            target_v = r + args.gamma * self.env.net(s_)[1]
-            adv = target_v - self.env.net(s)[1]
-            # adv = (adv - adv.mean()) / (adv.std() + 1e-8)
-
-        for _ in range(self.ppo_epoch):
-            for index in BatchSampler(SubsetRandomSampler(range(self.buffer_capacity)), self.batch_size, False):
-
-                alpha, beta = self.env.net(s[index])[0]
-                dist = Beta(alpha, beta)
-                a_logp = dist.log_prob(a[index]).sum(dim=1, keepdim=True)
-                ratio = torch.exp(a_logp - old_a_logp[index])
-
-                surr1 = ratio * adv[index]
-                surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * adv[index]
-                action_loss = -torch.min(surr1, surr2).mean()
-                value_loss = F.smooth_l1_loss(self.env.net(s[index])[1], target_v[index])
-                loss = action_loss + 2. * value_loss
-
-                self.optimizer.zero_grad()
-                loss.backward()
-                # nn.utils.clip_grad_norm_(self.net.parameters(), self.max_grad_norm)
-                self.optimizer.step()
 
 
 if __name__ == "__main__":
     NUM_EPISODES = 3000
     LOG_INTERVAL = 200
     env = Env()
-    agents = []
-    for _ in range(NUM_AGENTS):
-        agents.append(Agent(env))
 
     # state = env.reset()
     # video_file = 'output_mac_multi.avi'
@@ -260,7 +256,7 @@ if __name__ == "__main__":
         for t in range(1000):
             actions = []
             a_logps = []
-            for i, agent in enumerate(agents):
+            for i in range(NUM_AGENTS):
                 agent_state = state[i,...]
                 action, a_logp = env.select_action(agent_state)
                 actions.append(action * np.array([2., 1., 1.]) + np.array([-1., 0., 0.]))
@@ -269,10 +265,10 @@ if __name__ == "__main__":
             state_ = np.reshape(state_, (NUM_AGENTS, 4, 96, 96))
             if args.render:
                 env.render()
-            for i, agent in enumerate(agents):
-                if agent.store((state[i,...], actions[i], a_logps[i], reward[i], state_[i,...])):
+            for i in range(NUM_AGENTS):
+                if env.store((state[i,...], actions[i], a_logps[i], reward[i], state_[i,...])):
                     print('updating')
-                    agent.update()
+                    env.update()
             score += reward
 
             # video_obs = env.render('rgb_array')
@@ -296,8 +292,7 @@ if __name__ == "__main__":
 
         if i_ep % LOG_INTERVAL == 0:
             print('Ep {}\tLast score: {}\tMoving average score: {}'.format(i_ep, score, running_score))
-            for agent in agents:
-                agent.save_param()
+            env.save_param()
         if all(agent_score > env.reward_threshold for agent_score in running_score):
             print("Solved! Running reward is now {} and the last episode runs to {}!".format(running_score, score))
             break
