@@ -45,7 +45,7 @@ class Env():
 
     def __init__(self):
         self.env = MultiCarRacing(NUM_AGENTS)
-        self.env.seed(args.seed)
+        # self.env.seed(args.seed)
         self.net = Net().double().to(device)
         self.reward_threshold = 800
 
@@ -100,14 +100,17 @@ class Env():
         return self.env.render(arg)
 
     @staticmethod
-    # TODO: may have to modify this to account for multiple agents
     def rgb2gray(rgb, norm=True):
         # rgb image -> gray [0, 1]
-        gray = np.dot(rgb[..., :], [0.299, 0.587, 0.114])
-        if norm:
-            # normalize
-            gray = gray / 128. - 1.
-        return gray
+        images = []
+        for index in range(rgb.shape[0]):
+            image = rgb[index,...]
+            gray = np.dot(image[..., :], [0.299, 0.587, 0.114])
+            if norm:
+                # normalize
+                gray = gray / 128. - 1.
+            images.append(gray)
+        return np.vstack(images)
 
     @staticmethod
     def reward_memory():
