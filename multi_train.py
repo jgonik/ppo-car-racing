@@ -32,6 +32,7 @@ if use_cuda:
     torch.cuda.manual_seed(args.seed)
 
 NUM_AGENTS = 2
+COUNTER = 0
 writer = SummaryWriter()
 
 transition = np.dtype([('s', np.float64, (args.img_stack, 96, 96)), ('a', np.float64, (3,)), ('a_logp', np.float64),
@@ -55,7 +56,6 @@ class Env():
         self.training_step = 0
         self.reward_threshold = 800
         self.buffer = np.empty(self.buffer_capacity, dtype=transition)
-        self.counter = 0
 
     def update(self):
         self.training_step += 1
@@ -93,10 +93,10 @@ class Env():
                 self.optimizer.step()
 
     def store(self, transition):
-        self.buffer[self.counter] = transition
-        self.counter += 1
-        if self.counter == self.buffer_capacity:
-            self.counter = 0
+        self.buffer[COUNTER] = transition
+        COUNTER += 1
+        if COUNTER == self.buffer_capacity:
+            COUNTER = 0
             return True
         else:
             return False
@@ -117,7 +117,6 @@ class Env():
         return action, a_logp
 
     def reset(self):
-        self.counter = 0
         self.av_r = self.reward_memory()
 
         self.die = False
@@ -268,12 +267,6 @@ if __name__ == "__main__":
             if args.render:
                 env.render()
             for i in range(NUM_AGENTS):
-                print('all the shapes:')
-                print('state shape:', state[i,...].shape)
-                print('action shape:', actions[i].shape)
-                print('a log p shape:', a_logps[i].shape)
-                print('reward shape:', reward[i].shape)
-                print('other state shape:', state_[i,...].shape)
                 if env.store((state[i,...], actions[i], a_logps[i], reward[i], state_[i,...])):
                     print('updating')
                     env.update()
