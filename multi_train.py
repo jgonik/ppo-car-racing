@@ -64,6 +64,8 @@ class Env():
         a = torch.tensor(self.buffer['a'], dtype=torch.double).to(device)
         r = torch.tensor(self.buffer['r'], dtype=torch.double).to(device).view(-1, 1)
         s_ = torch.tensor(self.buffer['s_'], dtype=torch.double).to(device)
+        
+        print('s shape:', s.shape)
 
         old_a_logp = torch.tensor(self.buffer['a_logp'], dtype=torch.double).to(device).view(-1, 1)
 
@@ -266,6 +268,12 @@ if __name__ == "__main__":
             if args.render:
                 env.render()
             for i in range(NUM_AGENTS):
+                print('all the shapes:')
+                print('state shape:', state[i,...].shape)
+                print('action shape:', actions[i].shape)
+                print('a log p shape:', a_logps[i].shape)
+                print('reward shape:', reward[i].shape)
+                print('other state shape:', state_[i,...].shape)
                 if env.store((state[i,...], actions[i], a_logps[i], reward[i], state_[i,...])):
                     print('updating')
                     env.update()
