@@ -100,7 +100,7 @@ class Env():
             return False
 
     def save_param(self):
-        torch.save(self.net.state_dict(), 'param/multi_ppo_net_params.pkl')
+        torch.save(self.net.state_dict(), 'param/multi_ppo_net_params_refactor2.pkl')
 
     def select_action(self, state):
         state = torch.from_numpy(state).double().to(device).unsqueeze(0)
@@ -297,4 +297,5 @@ if __name__ == "__main__":
             print("Solved! Running reward is now {} and the last episode runs to {}!".format(running_score, score))
             break
 
-    vid_writer.release()
+    # vid_writer.release()
+
