@@ -76,7 +76,7 @@ class Env():
 
         for _ in range(self.ppo_epoch):
             for index in BatchSampler(SubsetRandomSampler(range(self.buffer_capacity)), self.batch_size, False):
-                alpha, beta = self.env.net(s[index])[0]
+                alpha, beta = self.net(s[index])[0]
                 dist = Beta(alpha, beta)
                 a_logp = dist.log_prob(a[index]).sum(dim=1, keepdim=True)
                 ratio = torch.exp(a_logp - old_a_logp[index])
@@ -253,39 +253,39 @@ if __name__ == "__main__":
         score = np.zeros((NUM_AGENTS,))
         state = env.reset()
         state = np.reshape(state, (NUM_AGENTS, 4, 96, 96))
-
-        for t in range(1000):
-            actions = []
-            a_logps = []
-            for i in range(NUM_AGENTS):
-                agent_state = state[i,...]
-                action, a_logp = env.select_action(agent_state)
-                actions.append(action * np.array([2., 1., 1.]) + np.array([-1., 0., 0.]))
-                a_logps.append(a_logp)
-            state_, reward, done, die = env.step(np.vstack(actions))
-            state_ = np.reshape(state_, (NUM_AGENTS, 4, 96, 96))
-            if args.render:
-                env.render()
-            for i in range(NUM_AGENTS):
-                if env.store((state[i,...], actions[i], a_logps[i], reward[i], state_[i,...])):
-                    print('updating')
+        
+        for agent_id in range(NUM_AGENTS):
+            for t in range(1000):
+                actions = []
+                a_logps = []
+                for i in range(NUM_AGENTS):
+                    agent_state = state[i,...]
+                    action, a_logp = env.select_action(agent_state)
+                    actions.append(action * np.array([2., 1., 1.]) + np.array([-1., 0., 0.]))
+                    a_logps.append(a_logp)
+                state_, reward, done, die = env.step(np.vstack(actions))
+                state_ = np.reshape(state_, (NUM_AGENTS, 4, 96, 96))
+                if args.render:
+                    env.render()
+                if env.store((state[agent_id,...], actions[agent_id], a_logps[agent_id], reward[agent_id], state_[agent_id,...])):
+                    print('updating agent ' + agent_id)
                     env.update()
-            score += reward
+                score += reward
 
-            # video_obs = env.render('rgb_array')
-            # video_obs = np.concatenate(video_obs)
-            # video_caption = ["agent_" + str(i) for i in range(NUM_AGENTS)]
+                # video_obs = env.render('rgb_array')
+                # video_obs = np.concatenate(video_obs)
+                # video_caption = ["agent_" + str(i) for i in range(NUM_AGENTS)]
 
-            # for line_idx, line in enumerate(video_caption):
-            #     video_obs = cv2.putText(video_obs, line,
-            #     (10, int(line_idx * video_h / 2 + 40)),
-            #     cv2.FONT_HERSHEY_SIMPLEX,
-            #     0.7, (0, 0, 255), 3)
-            # vid_writer.write(video_obs)
+                # for line_idx, line in enumerate(video_caption):
+                #     video_obs = cv2.putText(video_obs, line,
+                #     (10, int(line_idx * video_h / 2 + 40)),
+                #     cv2.FONT_HERSHEY_SIMPLEX,
+                #     0.7, (0, 0, 255), 3)
+                # vid_writer.write(video_obs)
 
-            state = state_
-            if done or die:
-                break
+                state = state_
+                if done or die:
+                    break
         running_score = running_score * 0.99 + score * 0.01
         for i in range(NUM_AGENTS):
             writer.add_scalar("running_score_" + str(i), running_score[i], i_ep)
