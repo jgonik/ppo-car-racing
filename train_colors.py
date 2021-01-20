@@ -1,6 +1,5 @@
 import argparse
-import faulthandler
-faulthandler.enable()
+import random
 
 import numpy as np
 
@@ -30,6 +29,7 @@ torch.manual_seed(args.seed)
 if use_cuda:
     torch.cuda.manual_seed(args.seed)
 
+CAR_COLORS = [(0.8, 0.0, 0.0), (0.0, 0.0, 0.8)] # red, blue
 transition = np.dtype([('s', np.float64, (args.img_stack, 96, 96)), ('a', np.float64, (3,)), ('a_logp', np.float64),
                        ('r', np.float64), ('s_', np.float64, (args.img_stack, 96, 96))])
 
@@ -233,6 +233,7 @@ if __name__ == "__main__":
     running_score = 0
     state = env.reset()
     for i_ep in range(100000):
+        env.env.car.hull.color = random.choice(CAR_COLORS)
         score = 0
         state = env.reset()
 
