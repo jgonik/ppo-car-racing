@@ -21,7 +21,7 @@ parser.add_argument('--seed', type=int, default=0, metavar='N', help='random see
 parser.add_argument('--render', action='store_true', help='render the environment')
 parser.add_argument('--vis', action='store_true', help='use visdom')
 parser.add_argument(
-    '--log-interval', type=int, default=10, metavar='N', help='interval between training status logs (default: 10)')
+    '--log-interval', type=int, default=100, metavar='N', help='interval between training status logs (default: 10)')
 args = parser.parse_args()
 
 use_cuda = torch.cuda.is_available()
@@ -179,8 +179,8 @@ class Agent():
         a_logp = a_logp.item()
         return action, a_logp
 
-    def save_param(self):
-        torch.save(self.net.state_dict(), 'param/ppo_net_params.pkl')
+    def save_param(self, name):
+        torch.save(self.net.state_dict(), 'param/ppo_net_params_separate_' + name + '.pkl')
 
     def store(self, transition):
         self.buffer[self.counter] = transition
@@ -236,7 +236,7 @@ if __name__ == "__main__":
     training_records = []
     running_score = np.array([0., 0.])
     state = env.reset()
-    for i_ep in range(100000):
+    for i_ep in range(50000):
         score = np.array([0., 0.])
         state = env.reset()
         agent1_state = state[:,0,...]
@@ -244,10 +244,10 @@ if __name__ == "__main__":
 
         for t in range(1000):
             action1, a_logp1 = agent1.select_action(agent1_state)
-            action2, a_logp2 = agent2.select_action(agent1_state)
-            action1 = action1 * np.array([2., 1., 1.]) + np.array([-1., 0., 0.])
-            action2 = action2 * np.array([2., 1., 1.]) + np.array([-1., 0., 0.])
-            action = np.vstack((action1, action2))
+            action2, a_logp2 = agent2.select_action(agent2_state)
+            action1_scaled = action1 * np.array([2., 1., 1.]) + np.array([-1., 0., 0.])
+            action2_scaled = action2 * np.array([2., 1., 1.]) + np.array([-1., 0., 0.])
+            action = np.vstack((action1_scaled, action2_scaled))
             state_, reward, done, die = env.step(action)
             if args.render:
                 env.render()
@@ -270,8 +270,8 @@ if __name__ == "__main__":
             if args.vis:
                 draw_reward(xdata=i_ep, ydata=running_score)
             print('Ep {}\tLast score: {}\tMoving average score: {}'.format(i_ep, score, running_score))
-            agent1.save_param()
-            agent2.save_param()
+            agent1.save_param('agent1')
+            agent2.save_param('agent2')
         if all(agent_score > env.reward_threshold for agent_score in running_score):
             print("Solved! Running reward is now {} and the last episode runs to {}!".format(running_score, score))
             break
