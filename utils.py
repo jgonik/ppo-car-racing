@@ -1,4 +1,3 @@
-import visdom
 import numpy as np
 
 

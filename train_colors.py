@@ -11,6 +11,7 @@ import torch.optim as optim
 from torch.distributions import Beta
 from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 from utils import DrawLine
+from color_car_racing import CarRacing
 
 parser = argparse.ArgumentParser(description='Train a PPO agent for the CarRacing-v0')
 parser.add_argument('--gamma', type=float, default=0.99, metavar='G', help='discount factor (default: 0.99)')
@@ -40,9 +41,9 @@ class Env():
     """
 
     def __init__(self):
-        self.env = gym.make('CarRacing-v0')
+        self.env = CarRacing()
         self.env.seed(args.seed)
-        self.reward_threshold = self.env.spec.reward_threshold
+        self.reward_threshold = 900
 
     def reset(self):
         self.counter = 0
@@ -233,7 +234,6 @@ if __name__ == "__main__":
     running_score = 0
     state = env.reset()
     for i_ep in range(100000):
-        env.env.car.hull.color = random.choice(CAR_COLORS)
         score = 0
         state = env.reset()
 
